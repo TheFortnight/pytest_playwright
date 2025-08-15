@@ -1,35 +1,31 @@
 # conftest.py
 import pytest
 
-@pytest.fixture(scope="session")
-def playwright_browser_launch_args(playwright_browser_launch_args):
-    # disable the geolocation feature entirely in all browsers
-    playwright_browser_launch_args["args"] = (
-        playwright_browser_launch_args.get("args", [])
-        + ["--disable-features=Geolocation"]
-    )
-    return playwright_browser_launch_args
-
-@pytest.fixture(scope="session")
-def browser_context_args(browser_context_args):
-    """
-    • Never grant geolocation
-    • Block service workers
-    """
-    # 1. Don’t grant any geolocation permission
-    browser_context_args["permissions"] = []
-
-    # 2. Block service workers so they can’t intercept requests
-    browser_context_args["service_workers"] = "block"
-
-    return browser_context_args
-
 @pytest.fixture(autouse=True)
-def disable_http_cache(page):
+def disable_http_cache(page, browser_name):
     """
-    For every page, open a CDP session and disable the network cache.
+    Disable browser cache for every test.
+    - Chromium: via CDP (true cache disable)
+    - Firefox/WebKit: add request headers to force revalidation/no-store
     """
-    cdp = page.context.new_cdp_session(page)
-    cdp.send("Network.enable")
-    cdp.send("Network.setCacheDisabled", {"cacheDisabled": True})
-    yield
+    if browser_name == "chromium":
+        cdp = page.context.new_cdp_session(page)
+        cdp.send("Network.enable")
+        cdp.send("Network.setCacheDisabled", {"cacheDisabled": True})
+        yield
+        return
+
+    # For firefox/webkit: install a catch-all route that adds no-cache headers
+    def _no_cache(route, request):
+        headers = dict(request.headers)
+        headers["Cache-Control"] = "no-cache, no-store, max-age=0"
+        headers["Pragma"] = "no-cache"
+        headers["Expires"] = "0"
+        route.continue_(headers=headers)
+
+    # Register AFTER your specific mocks so it acts as a fallback
+    page.context.route("**/*", _no_cache)
+    try:
+        yield
+    finally:
+        page.context.unroute("**/*", _no_cache)
