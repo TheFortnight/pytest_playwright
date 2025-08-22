@@ -41,11 +41,18 @@ def disable_http_cache(page, browser_name):
         return
 
     def _no_cache(route, request):
-        headers = dict(request.headers)
-        headers["Cache-Control"] = "no-cache, no-store, max-age=0"
-        headers["Pragma"] = "no-cache"
-        headers["Expires"] = "0"
-        route.continue_(headers=headers)
+        # 1) never modify preflights — let real headers through
+      #  if request.method == "OPTIONS":
+      #      return route.fallback()  # IMPORTANT: don't set headers here
+
+        # 2) for others, preserve existing headers and add cache-busters
+        headers = dict(request.headers)          # keeps Origin, auth, etc.
+        headers["cache-control"] = "no-cache, no-store, max-age=0"
+        headers["pragma"] = "no-cache"
+        headers["expires"] = "0"
+
+        # IMPORTANT: use fallback so *other* routes (your /about mock) still run
+       # return route.fallback(headers=headers)
 
     page.context.route("**/*", _no_cache)
     try:
