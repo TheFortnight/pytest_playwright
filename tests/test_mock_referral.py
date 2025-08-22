@@ -1,40 +1,75 @@
 # tests/test_mock_by_location.py
-import time
-import json
-from playwright.sync_api import Page, Route, expect
+import time, json
+from playwright.sync_api import Page, Route, Request, expect
 
 def test_mock_by_location(page: Page):
-    # 1. Register the mock before any navigation or clicks
-    def handle_route(route: Route):
+    pattern = "**/api/api_254/marketing/referral/users/about*"
 
-        mock_body = {"is_referrer":False,"is_referral":True,"has_linked_referral_code":False}
+    # OFF initially: earlier /about calls pass through
+    mock_active = {"on": False}
 
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body=json.dumps(mock_body)
-        )
+    def handle_about(route: Route, request: Request):
+        # ---- PRE-FLIGHT (OPTIONS) ----
+        if request.method == "OPTIONS":
+            # Playwright normalizes header names to lowercase
+            origin      = request.headers.get("origin", "*")
+            acr_method  = request.headers.get("access-control-request-method", "GET")
+            acr_headers = request.headers.get("access-control-request-headers", "")
+            return route.fulfill(
+                status=204,
+                headers={
+                    "Access-Control-Allow-Origin": origin,
+                    "Access-Control-Allow-Methods": acr_method,
+                    "Access-Control-Allow-Headers": acr_headers,
+                    "Access-Control-Max-Age": "600",
+                    # If your fetch sends cookies/credentials, echo the origin and add:
+                    # "Access-Control-Allow-Credentials": "true",
+                    "Vary": "Origin",
+                },
+            )
 
-    page.context.route(
-        "**/api/api_254/marketing/referral/users/about",
-        lambda route, request: handle_route(route)
-    )
+        # ---- AFTER ACTIVATION -> FULFILL THE REAL GET ----
+        if mock_active["on"] and request.method == "GET":
+            origin = request.headers.get("origin", "*")
+            body = {
+                "is_referrer": False,
+                "is_referral": True,
+                "has_linked_referral_code": True,
+            }
+            return route.fulfill(
+                status=200,
+                content_type="application/json",
+                headers={
+                    "Access-Control-Allow-Origin": origin,
+                    # If credentials are in use, also:
+                    # "Access-Control-Allow-Credentials": "true",
+                    "Vary": "Origin",
+                },
+                body=json.dumps(body),
+            )
 
-    # 2. Navigate and click, *waiting* for the mocked network call
-    
-    with page.expect_response("**/api/api_254/marketing/referral/users/about") as resp_info:
-        page.goto("https://phrm-16544.dev.portal.phrm.tech/")
-       # page.get_by_role("link", name="Аптеки").click()
+        # ---- BEFORE ACTIVATION (or non-GET) -> PASS THROUGH ----
+        route.continue_()
 
-    # 3. Assert that the response came from our mock
-    time.sleep(60)  # Optional: wait to visually confirm the mock is displayed
-    response = resp_info.value
-    assert response.status == 200
-    data = response.json()
-    #assert data["elements"][0]["title"] == "MOCK!!!"
+    # One route for both OPTIONS and GET (order-safe)
+    page.context.route(pattern, handle_about)
 
-    # 4. Wait for your UI to show the mocked data
-    #    (adjust selector to whatever your app renders)
-    
+    page.goto("https://phrm-16901.dev.portal.phrm.tech/?referral_code=48e9ad0a-0cd4-4e39-ba67-01781d8aabc5")
+
+    # keep your timing
+    time.sleep(35)
+
+    # flip ON only after the input exists
+    codeInput = page.locator('.dialog .code-dialog__code-box input')
+    codeInput.first.wait_for(state="visible")
+    mock_active["on"] = True  # <— now the *last four* (and any later) /about reqs will be mocked
+
+    # type your code (unchanged style)
+    codeInput.nth(0).fill('2')
+    codeInput.nth(1).fill('5')
+    codeInput.nth(2).fill('0')
+    codeInput.nth(3).fill('8')
+    codeInput.nth(4).fill('1')
+
+    time.sleep(160)  # unchanged
     expect(page.locator('.dialog')).to_be_visible()
-    

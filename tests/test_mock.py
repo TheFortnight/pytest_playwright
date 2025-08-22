@@ -163,7 +163,7 @@ def test_mock_by_location(page: Page):
     # 2. Navigate and click, *waiting* for the mocked network call
     
     with page.expect_response("**/api/api_240/partners/pharmacies/by_location/**") as resp_info:
-        page.goto("https://staging.portal.phrm.tech/pharmacies")
+        page.goto("https://expero.ru/pharmacies")
        # page.get_by_role("link", name="Аптеки").click()
 
     # 3. Assert that the response came from our mock
